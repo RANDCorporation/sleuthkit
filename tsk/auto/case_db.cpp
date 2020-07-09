@@ -85,7 +85,8 @@ TskCaseDb::newDb(const TSK_TCHAR * const path)
 TskCaseDb *
 TskCaseDb::newDb(const TSK_TCHAR * const path, CaseDbConnectionInfo * info)
 {
-#if defined(HAVE_POSTGRESQL) && defined(TSK_WIN32)
+//#if defined(HAVE_POSTGRESQL) && defined(TSK_WIN32)
+#if defined(HAVE_POSTGRESQL) 
     TskDb *db = new TskDbPostgreSQL(path, true);
 
     // Store connection info for the multi-user database
@@ -156,7 +157,8 @@ TskCaseDb::openDb(const TSK_TCHAR * path)
 TskCaseDb *
 TskCaseDb::openDb(const TSK_TCHAR * path, CaseDbConnectionInfo * info)
 {
-#if defined(HAVE_POSTGRESQL) && defined(TSK_WIN32)
+//#if defined(HAVE_POSTGRESQL) && defined(TSK_WIN32)
+#if defined(HAVE_POSTGRESQL) 
 
     TskDb *db = new TskDbPostgreSQL(path, true);
 

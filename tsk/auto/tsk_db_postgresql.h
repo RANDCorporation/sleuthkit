@@ -21,7 +21,7 @@
 
 #include "tsk_db.h"
 
-#ifdef TSK_WIN32
+//#ifdef TSK_WIN32
 
 #include "libpq-fe.h"
 #include <string.h>
@@ -130,6 +130,6 @@ private:
     TSK_RETVAL_ENUM addLayoutFileInfo(const int64_t parObjId, const int64_t fsObjId, const TSK_DB_FILES_TYPE_ENUM dbFileType, const char *fileName, const uint64_t size, int64_t & objId, int64_t dataSourceObjId);
 };
 
-#endif // TSK_WIN32
+//#endif // TSK_WIN32
 #endif // _TSK_DB_POSTGRESQL_H
 #endif // HAVE_POSTGRESQL

@@ -85,9 +85,13 @@ extern "C" {
         uint32_t tag;           ///< Set to TSK_IMG_INFO_TAG when struct is alloc
         TSK_IMG_TYPE_ENUM itype;        ///< Type of disk image format
         TSK_OFF_T size;         ///< Total size of image in bytes
+        int num_img;            ///< Number of image files
         unsigned int sector_size;       ///< sector size of device in bytes (typically 512)
         unsigned int page_size;         ///< page size of NAND page in bytes (defaults to 2048)
         unsigned int spare_size;        ///< spare or OOB size of NAND in bytes (defaults to 64)
+
+        // the following are protected by cache_lock in IMG_INFO
+        TSK_TCHAR **images;    ///< Image names
 
         tsk_lock_t cache_lock;  ///< Lock for cache and associated values
         char cache[TSK_IMG_INFO_CACHE_NUM][TSK_IMG_INFO_CACHE_LEN];     ///< read cache (r/w shared - lock) 
@@ -106,10 +110,19 @@ extern "C" {
     extern TSK_IMG_INFO *tsk_img_open(int,
         const TSK_TCHAR * const images[], TSK_IMG_TYPE_ENUM,
         unsigned int a_ssize);
+    extern TSK_IMG_INFO *tsk_img_open_digi(int,
+        const TSK_TCHAR * const images[], 
+        unsigned int a_ssize);
     extern TSK_IMG_INFO *tsk_img_open_utf8_sing(const char *a_image,
         TSK_IMG_TYPE_ENUM type, unsigned int a_ssize);
     extern TSK_IMG_INFO *tsk_img_open_utf8(int num_img,
         const char *const images[], TSK_IMG_TYPE_ENUM type,
+        unsigned int a_ssize);
+    extern TSK_IMG_INFO *tsk_img_open_utf8_digi(int num_img,
+        const char *const images[], TSK_IMG_TYPE_ENUM type,
+        unsigned int a_ssize);
+    extern TSK_IMG_INFO *tsk_img_append_utf8(TSK_IMG_INFO *, int num_img,
+        const char *const images[], 
         unsigned int a_ssize);
     extern TSK_IMG_INFO *tsk_img_open_external(void* ext_img_info,
         TSK_OFF_T size, unsigned int sector_size,

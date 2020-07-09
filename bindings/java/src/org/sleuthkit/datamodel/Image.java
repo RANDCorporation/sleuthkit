@@ -53,7 +53,10 @@ public class Image extends AbstractContent {
 	 * @param paths
 	 * @param timezone
 	 * @param md5
+	 *
+	 * @deprecated Use the constructor that takes a size.
 	 */
+	@Deprecated
 	protected Image(SleuthkitCase db, long obj_id, long type, long ssize, String name, String[] paths, String timezone, String md5) throws TskCoreException {
 		super(db, obj_id, name);
 		this.type = type;
@@ -61,6 +64,29 @@ public class Image extends AbstractContent {
 		this.paths = paths;
 		this.timezone = timezone;
 		this.size = 0;
+		this.md5 = md5;
+	}
+
+	/**
+	 * constructor most inputs are from the database
+	 *
+	 * @param db       database object
+	 * @param obj_id
+	 * @param type
+	 * @param ssize    Sector Size
+	 * @param name     Display Name
+	 * @param paths
+	 * @param timezone
+	 * @param md5
+	 * @param size
+	 */
+	Image(SleuthkitCase db, long obj_id, long type, long ssize, String name, String[] paths, String timezone, String md5, long size) throws TskCoreException {
+		super(db, obj_id, name);
+		this.type = type;
+		this.ssize = ssize;
+		this.paths = paths;
+		this.timezone = timezone;
+		this.size = size;
 		this.md5 = md5;
 	}
 
@@ -73,8 +99,31 @@ public class Image extends AbstractContent {
 		if (imageHandle == 0) {
 			imageHandle = SleuthkitJNI.openImage(paths);
 		}
-
+		
 		return imageHandle;
+	}
+	
+	public synchronized void appendImageFiles() throws TskCoreException {
+		if (imageHandle != 0) {
+			String[] newPaths = getSleuthkitCase().getNewImagePaths( this.getId(), this.paths.length);
+			System.out.println( "Existing paths:" + this.paths.length );
+			if( this.paths.length > 0 ){
+				System.out.println( "First path:" + this.paths[0] );
+				System.out.println( "Last path:" + this.paths[this.paths.length-1] );
+			}
+			
+			if( newPaths.length > 0 ){
+				//System.out.println( "Clearing cached FS Handles");
+				//SleuthkitJNI.clearCachedFsHandles(imageHandle);
+				System.out.println( "First new path:" + newPaths[0] );
+				System.out.println( "Last new path:" + newPaths[newPaths.length-1] );
+				SleuthkitJNI.appendImageFilesDigi(imageHandle, newPaths);
+				ArrayList<String> objPaths = new ArrayList<String>();
+				objPaths.addAll( Arrays.asList(this.paths) );
+				objPaths.addAll( Arrays.asList(newPaths) );
+				this.paths = objPaths.toArray( new String[objPaths.size()]);
+			}
+		}
 	}
 
 	@Override
@@ -237,7 +286,8 @@ public class Image extends AbstractContent {
 	}
 
 	/**
-	 * Test if the image represented by this object exists on disk.
+	 * Test if the file that created this image exists on disk.
+	 * Does not work on local disks - will always return false
 	 *
 	 * @return True if the file still exists
 	 */

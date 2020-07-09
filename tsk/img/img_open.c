@@ -262,7 +262,22 @@ tsk_img_open(int num_img,
     return img_info;
 }
 
+TSK_IMG_INFO *
+tsk_img_open_digi(int num_img,
+    const TSK_TCHAR * const images[], 
+    unsigned int a_ssize)
+{
+    return raw_open_digi(num_img, images, a_ssize);
+}
 
+TSK_IMG_INFO *
+tsk_img_append(TSK_IMG_INFO * img_info, int num_img,
+    const TSK_TCHAR * const images[], 
+    unsigned int a_ssize)
+{
+    raw_append(img_info, num_img, images, a_ssize);
+    return img_info;
+}
 /**
 * \ingroup imglib
  * Opens a single (non-split) disk image file so that it can be read.  This version
@@ -370,6 +385,14 @@ tsk_img_open_utf8(int num_img,
 #endif
 }
 
+TSK_IMG_INFO *
+tsk_img_open_utf8_digi(int num_img,
+    const char *const images[], TSK_IMG_TYPE_ENUM type,
+    unsigned int a_ssize)
+{
+    return tsk_img_open_digi(num_img, images, a_ssize);
+}
+
 /**
 * \ingroup imglib
  * Opens an an image of type TSK_IMG_TYPE_EXTERNAL. The void pointer parameter
@@ -458,11 +481,18 @@ tsk_img_open_external(
     return img_info;
 }
 
+TSK_IMG_INFO *
+tsk_img_append_utf8(TSK_IMG_INFO * img_info, int num_img,
+    const char *const images[], 
+    unsigned int a_ssize)
+{
+    return tsk_img_append(img_info, num_img, images, a_ssize);
+}
 #if 0
 /* This interface needs some more thought because the size of wchar is not standard.
  * If the goal i to provide a constant wchar interface, then we need to incorporate
  * UTF-32 to UTF-8 support as well.  If the goal is to provide a standard UTF-16
- * interface, we should use another type besiddes wchar_t.
+ * interface, we should use another type besides wchar_t.
  */
 TSK_IMG_INFO *
 tsk_img_open_utf16(int num_img,
@@ -478,7 +508,7 @@ tsk_img_open_utf16(int num_img,
         TSK_ENDIAN_ENUM endian;
         uint16_t tmp1;
 
-        /* The unicode conversio routines are primarily to convert Unicode
+        /* The unicode conversion routines are primarily to convert Unicode
          * in file and volume system images, which means they could be in
          * an endian ordering different from the local one.  We need to figure
          * out our local ordering so we can give it the right flag */
@@ -556,53 +586,4 @@ tsk_img_close(TSK_IMG_INFO * a_img_info)
     }
     tsk_deinit_lock(&(a_img_info->cache_lock));
     a_img_info->close(a_img_info);
-}
-
-
-/**
- * \internal
- * Return the list of names for this open images. 
- * This is sort of a hack implementation and is internal only at this
- * point.  Returns pointers into the IMG_INFO structs and should not be
- * modified or freed.
- * @param a_img_info Image to pull names from
- * @param a_num_imgs Will contain number of elements in the return array.
- * @returns List of names.
- */
-const TSK_TCHAR **
-tsk_img_get_names(TSK_IMG_INFO *a_img_info, int *a_num_imgs) 
-{
-    if (a_img_info == NULL) {
-        tsk_error_reset();
-        tsk_error_set_errno(TSK_ERR_IMG_ARG);
-        tsk_error_set_errstr("tsk_img_get_names: IMG_INFO is NULL");
-        return NULL;
-    }
-    if (a_num_imgs == NULL) {
-        tsk_error_reset();
-        tsk_error_set_errno(TSK_ERR_IMG_ARG);
-        tsk_error_set_errstr("tsk_img_get_names: a_num_imgs is NULL");
-        return NULL;
-    }
-    *a_num_imgs = 0;
-
-    switch (a_img_info->itype) {
-        case TSK_IMG_TYPE_RAW:
-            {
-                IMG_RAW_INFO *raw_info = (IMG_RAW_INFO *)a_img_info;
-                *a_num_imgs = raw_info->num_img;
-                return raw_info->images;
-            }
-#if HAVE_LIBEWF
-        case TSK_IMG_TYPE_EWF_EWF:
-            {
-                IMG_EWF_INFO *ewf_info = (IMG_EWF_INFO *)a_img_info;
-                *a_num_imgs = ewf_info->num_imgs;
-                return ewf_info->images;
-            }
-            break;
-#endif
-        default:
-            return NULL;
-    }
 }

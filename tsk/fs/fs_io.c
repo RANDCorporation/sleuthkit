@@ -34,7 +34,7 @@
  * @param a_off Byte offset into file system (i.e. not offset into image)
  * @param a_buf Buffer to write data into
  * @param a_len Number of bytes to read
- * @retuns Number of bytes read or -1 on error
+ * @returns Number of bytes read or -1 on error
  */
 static ssize_t
 fs_prepost_read(TSK_FS_INFO * a_fs, TSK_OFF_T a_off, char *a_buf,
@@ -94,18 +94,27 @@ tsk_fs_read(TSK_FS_INFO * a_fs, TSK_OFF_T a_off, char *a_buf, size_t a_len)
     if ((a_fs->last_block_act > 0)
         && ((TSK_DADDR_T) a_off >=
             ((a_fs->last_block_act + 1) * a_fs->block_size))) {
-        tsk_error_reset();
-        tsk_error_set_errno(TSK_ERR_FS_READ);
-        if ((TSK_DADDR_T) a_off <
-            ((a_fs->last_block + 1) * a_fs->block_size))
-            tsk_error_set_errstr
-                ("tsk_fs_read: Offset missing in partial image: %"
-                PRIuDADDR ")", a_off);
-        else
-            tsk_error_set_errstr
+        
+        a_fs->last_block_act =
+            (a_fs->img_info->size - a_fs->offset) / a_fs->block_size - 1;
+        
+            if ((a_fs->last_block_act > 0)
+                && ((TSK_DADDR_T) a_off >=
+                    ((a_fs->last_block_act + 1) * a_fs->block_size))) {
+        
+            tsk_error_reset();
+            tsk_error_set_errno(TSK_ERR_FS_READ);
+            if ((TSK_DADDR_T) a_off <
+                ((a_fs->last_block + 1) * a_fs->block_size))
+                tsk_error_set_errstr
+                    ("tsk_fs_read: Offset missing in partial image: %"
+                    PRIuDADDR ")", a_off);
+            else
+                tsk_error_set_errstr
                 ("tsk_fs_read: Offset is too large for image: %" PRIuDADDR
-                ")", a_off);
-        return -1;
+                    ")", a_off);
+            return -1;
+        }
     }
 
     if (((a_fs->block_pre_size) || (a_fs->block_post_size))

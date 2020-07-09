@@ -24,6 +24,19 @@
 
 #ifdef TSK_WIN32
 #include <winioctl.h>
+#else
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
+#endif
+
+#ifndef S_IFMT
+#define S_IFMT __S_IFMT
+#endif
+
+#ifndef S_IFDIR
+#define S_IFDIR __S_IFDIR
 #endif
 
 
@@ -51,7 +64,7 @@ raw_read_segment(IMG_RAW_INFO * raw_info, int idx, char *buf,
         if (tsk_verbose) {
             tsk_fprintf(stderr,
                 "raw_read_segment: opening file into slot %d: %" PRIttocTSK
-                "\n", raw_info->next_slot, raw_info->images[idx]);
+                "\n", raw_info->next_slot, raw_info->img_info.images[idx]);
         }
 
         /* Grab the next cache slot */
@@ -62,7 +75,7 @@ raw_read_segment(IMG_RAW_INFO * raw_info, int idx, char *buf,
             if (tsk_verbose) {
                 tsk_fprintf(stderr,
                     "raw_read_segment: closing file %" PRIttocTSK "\n",
-                    raw_info->images[cimg->image]);
+                    raw_info->img_info.images[cimg->image]);
             }
 #ifdef TSK_WIN32
             CloseHandle(cimg->fd);
@@ -73,7 +86,7 @@ raw_read_segment(IMG_RAW_INFO * raw_info, int idx, char *buf,
         }
 
 #ifdef TSK_WIN32
-        cimg->fd = CreateFile(raw_info->images[idx], FILE_READ_DATA,
+        cimg->fd = CreateFile(raw_info->img_info.images[idx], FILE_READ_DATA,
                               FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0,
                               NULL);
         if ( cimg->fd == INVALID_HANDLE_VALUE ) {
@@ -82,18 +95,18 @@ raw_read_segment(IMG_RAW_INFO * raw_info, int idx, char *buf,
             tsk_error_reset();
             tsk_error_set_errno(TSK_ERR_IMG_OPEN);
             tsk_error_set_errstr("raw_read: file \"%" PRIttocTSK
-                                "\" - %d", raw_info->images[idx], lastError);
+                                "\" - %d", raw_info->img_info.images[idx], lastError);
             return -1;
         }
 
 #else
         if ((cimg->fd =
-                open(raw_info->images[idx], O_RDONLY | O_BINARY)) < 0) {
+                open(raw_info->img_info.images[idx], O_RDONLY | O_BINARY)) < 0) {
             cimg->fd = 0; /* so we don't close it next time */
             tsk_error_reset();
             tsk_error_set_errno(TSK_ERR_IMG_OPEN);
             tsk_error_set_errstr("raw_read: file \"%" PRIttocTSK
-                "\" - %s", raw_info->images[idx], strerror(errno));
+                "\" - %s", raw_info->img_info.images[idx], strerror(errno));
             return -1;
         }
 #endif
@@ -126,7 +139,7 @@ raw_read_segment(IMG_RAW_INFO * raw_info, int idx, char *buf,
                 tsk_error_set_errno(TSK_ERR_IMG_SEEK);
                 tsk_error_set_errstr("raw_read: file \"%" PRIttocTSK
                     "\" offset %" PRIuOFF " seek - %d",
-                    raw_info->images[idx], rel_offset,
+                    raw_info->img_info.images[idx], rel_offset,
                     lastError);
                 return -1;
             }
@@ -145,11 +158,16 @@ raw_read_segment(IMG_RAW_INFO * raw_info, int idx, char *buf,
             tsk_error_set_errno(TSK_ERR_IMG_READ);
             tsk_error_set_errstr("raw_read: file \"%" PRIttocTSK
                 "\" offset: %" PRIuOFF " read len: %" PRIuSIZE " - %d",
-                raw_info->images[idx], rel_offset, len,
+                raw_info->img_info.images[idx], rel_offset, len,
                 lastError);
             return -1;
         }
         cnt = (ssize_t) nread;
+
+        if (raw_info->img_writer != NULL) {
+            /* img_writer is not used with split images, so rel_offset is just the normal offset*/
+            raw_info->img_writer->add(raw_info->img_writer, rel_offset, buf, cnt);
+        }
     }
 #else
     if (cimg->seek_pos != rel_offset) {
@@ -157,7 +175,7 @@ raw_read_segment(IMG_RAW_INFO * raw_info, int idx, char *buf,
             tsk_error_reset();
             tsk_error_set_errno(TSK_ERR_IMG_SEEK);
             tsk_error_set_errstr("raw_read: file \"%" PRIttocTSK
-                "\" offset %" PRIuOFF " seek - %s", raw_info->images[idx],
+                "\" offset %" PRIuOFF " seek - %s", raw_info->img_info.images[idx],
                 rel_offset, strerror(errno));
             return -1;
         }
@@ -169,7 +187,7 @@ raw_read_segment(IMG_RAW_INFO * raw_info, int idx, char *buf,
         tsk_error_reset();
         tsk_error_set_errno(TSK_ERR_IMG_READ);
         tsk_error_set_errstr("raw_read: file \"%" PRIttocTSK "\" offset: %"
-            PRIuOFF " read len: %" PRIuSIZE " - %s", raw_info->images[idx],
+            PRIuOFF " read len: %" PRIuSIZE " - %s", raw_info->img_info.images[idx],
             rel_offset, len, strerror(errno));
         return -1;
     }
@@ -215,7 +233,7 @@ raw_read(TSK_IMG_INFO * img_info, TSK_OFF_T offset, char *buf, size_t len)
     }
 
     // Find the location of the offset
-    for (i = 0; i < raw_info->num_img; i++) {
+    for (i = 0; i < raw_info->img_info.num_img; i++) {
 
         /* Does the data start in this image? */
         if (offset < raw_info->max_off[i]) {
@@ -255,11 +273,11 @@ raw_read(TSK_IMG_INFO * img_info, TSK_OFF_T offset, char *buf, size_t len)
 
             /* read from the next image segment(s) if needed */
             if (((TSK_OFF_T) cnt == read_len) && (read_len != len)) {
-                ssize_t cnt2;
 
                 len -= read_len;
 
                 while (len > 0) {
+                    ssize_t cnt2;
                     /* go to the next image segment */
                     i++;
 
@@ -315,22 +333,24 @@ static void
 raw_imgstat(TSK_IMG_INFO * img_info, FILE * hFile)
 {
     IMG_RAW_INFO *raw_info = (IMG_RAW_INFO *) img_info;
-    int i;
 
     tsk_fprintf(hFile, "IMAGE FILE INFORMATION\n");
     tsk_fprintf(hFile, "--------------------------------------------\n");
     tsk_fprintf(hFile, "Image Type: raw\n");
     tsk_fprintf(hFile, "\nSize in bytes: %" PRIuOFF "\n", img_info->size);
+    tsk_fprintf(hFile, "Sector size:\t%d\n", img_info->sector_size);
 
-    if (raw_info->num_img > 1) {
+    if (raw_info->img_info.num_img > 1) {
+        int i;
+
         tsk_fprintf(hFile,
             "\n--------------------------------------------\n");
         tsk_fprintf(hFile, "Split Information:\n");
 
-        for (i = 0; i < raw_info->num_img; i++) {
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
             tsk_fprintf(hFile,
                 "%" PRIttocTSK "  (%" PRIuOFF " to %" PRIuOFF ")\n",
-                raw_info->images[i],
+                raw_info->img_info.images[i],
                 (TSK_OFF_T) (i == 0) ? 0 : raw_info->max_off[i - 1],
                 (TSK_OFF_T) (raw_info->max_off[i] - 1));
         }
@@ -351,6 +371,15 @@ raw_close(TSK_IMG_INFO * img_info)
 {
     IMG_RAW_INFO *raw_info = (IMG_RAW_INFO *) img_info;
     int i;
+
+#ifdef TSK_WIN32
+    if (raw_info->img_writer != NULL) {
+        raw_info->img_writer->close(raw_info->img_writer);
+        free(raw_info->img_writer);
+        raw_info->img_writer = NULL;
+    }
+#endif
+
     for (i = 0; i < SPLIT_CACHE; i++) {
         if (raw_info->cache[i].fd != 0)
 #ifdef TSK_WIN32
@@ -359,14 +388,14 @@ raw_close(TSK_IMG_INFO * img_info)
             close(raw_info->cache[i].fd);
 #endif
     }
-    for (i = 0; i < raw_info->num_img; i++) {
-        if (raw_info->images[i])
-            free(raw_info->images[i]);
+    for (i = 0; i < raw_info->img_info.num_img; i++) {
+        if (raw_info->img_info.images[i])
+            free(raw_info->img_info.images[i]);
     }
     if (raw_info->max_off)
         free(raw_info->max_off);
-    if (raw_info->images)
-        free(raw_info->images);
+    if (raw_info->img_info.images)
+        free(raw_info->img_info.images);
     if (raw_info->cptr)
         free(raw_info->cptr);
 
@@ -383,6 +412,32 @@ raw_close(TSK_IMG_INFO * img_info)
  * @return the size in bytes, or -1 on error/unknown,
  *         -2 if unreadable, -3 if it's a directory.
  */
+
+static const char *
+get_image_file(const TSK_TCHAR * a_file)
+{
+    size_t len = TSTRLEN(a_file);
+    TSK_TCHAR * copy = (TSK_TCHAR *) tsk_malloc(sizeof(TSK_TCHAR) * (len + 1));
+    TSTRNCPY(copy, a_file, len + 1);
+    char * imageFile = strtok( copy, "|" );
+    len = TSTRLEN(imageFile);
+    TSK_TCHAR * copy2 = (TSK_TCHAR *) tsk_malloc(sizeof(TSK_TCHAR) * (len + 1));
+    TSTRNCPY(copy2, imageFile, len + 1);
+    free( copy );
+    return copy2;
+}
+static TSK_OFF_T
+get_size_digi(const TSK_TCHAR * a_file, uint8_t a_is_winobj)
+{
+    size_t len = TSTRLEN(a_file);
+    TSK_TCHAR * copy = (TSK_TCHAR *) tsk_malloc(sizeof(TSK_TCHAR) * (len + 1));
+    TSTRNCPY(copy, a_file, len + 1);
+    char * imageFile = strtok( copy, "|" );
+    char * strSize = strtok( NULL, "|");
+    TSK_OFF_T size = atol( strSize );
+    free( copy );
+    return size;
+}
 static TSK_OFF_T
 get_size(const TSK_TCHAR * a_file, uint8_t a_is_winobj)
 {
@@ -597,9 +652,9 @@ raw_open(int a_num_img, const TSK_TCHAR * const a_images[],
 
     /* see if there are more of them... */
     if ((a_num_img == 1) && (raw_info->is_winobj == 0)) {
-        if ((raw_info->images =
+        if ((raw_info->img_info.images =
                 tsk_img_findFiles(a_images[0],
-                    &raw_info->num_img)) == NULL) {
+                    &raw_info->img_info.num_img)) == NULL) {
             tsk_error_reset();
             tsk_error_set_errno(TSK_ERR_IMG_STAT);
             tsk_error_set_errstr
@@ -610,54 +665,54 @@ raw_open(int a_num_img, const TSK_TCHAR * const a_images[],
         }
     }
     else {
-        raw_info->num_img = a_num_img;
-        raw_info->images =
+        raw_info->img_info.num_img = a_num_img;
+        raw_info->img_info.images =
             (TSK_TCHAR **) tsk_malloc(sizeof(TSK_TCHAR *) * a_num_img);
-        if (raw_info->images == NULL) {
+        if (raw_info->img_info.images == NULL) {
             tsk_img_free(raw_info);
             return NULL;
         }
 
-        for (i = 0; i < raw_info->num_img; i++) {
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
             size_t len = TSTRLEN(a_images[i]);
-            raw_info->images[i] =
+            raw_info->img_info.images[i] =
                 (TSK_TCHAR *) tsk_malloc(sizeof(TSK_TCHAR) * (len + 1));
-            if (raw_info->images[i] == NULL) {
+            if (raw_info->img_info.images[i] == NULL) {
                 int j;
                 for (j = 0; j < i; j++) {
-                    free(raw_info->images[j]);
+                    free(raw_info->img_info.images[j]);
                 }
-                free(raw_info->images);
+                free(raw_info->img_info.images);
                 tsk_img_free(raw_info);
                 return NULL;
             }
-            TSTRNCPY(raw_info->images[i], a_images[i], len + 1);
+            TSTRNCPY(raw_info->img_info.images[i], a_images[i], len + 1);
         }
     }
 
     /* sanity check: when we have multiple segments, the size of
      * each must be known */
-    if ((raw_info->num_img > 1) && (first_seg_size < 0)) {
+    if ((raw_info->img_info.num_img > 1) && (first_seg_size < 0)) {
         if (tsk_verbose) {
             tsk_fprintf(stderr,
                 "raw_open: file size is unknown in a segmented raw image\n");
         }
 
-        for (i = 0; i < raw_info->num_img; i++) {
-            free(raw_info->images[i]);
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
+            free(raw_info->img_info.images[i]);
         }
-        free(raw_info->images);
+        free(raw_info->img_info.images);
         tsk_img_free(raw_info);
         return NULL;
     }
 
     /* initialize the split cache */
-    raw_info->cptr = (int *) tsk_malloc(raw_info->num_img * sizeof(int));
+    raw_info->cptr = (int *) tsk_malloc(raw_info->img_info.num_img * sizeof(int));
     if (raw_info->cptr == NULL) {
-        for (i = 0; i < raw_info->num_img; i++) {
-            free(raw_info->images[i]);
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
+            free(raw_info->img_info.images[i]);
         }
-        free(raw_info->images);
+        free(raw_info->img_info.images);
         tsk_img_free(raw_info);
         return NULL;
     }
@@ -668,13 +723,13 @@ raw_open(int a_num_img, const TSK_TCHAR * const a_images[],
     /* initialize the offset table and re-use the first segment
      * size gathered above */
     raw_info->max_off =
-        (TSK_OFF_T *) tsk_malloc(raw_info->num_img * sizeof(TSK_OFF_T));
+        (TSK_OFF_T *) tsk_malloc(raw_info->img_info.num_img * sizeof(TSK_OFF_T));
     if (raw_info->max_off == NULL) {
         free(raw_info->cptr);
-        for (i = 0; i < raw_info->num_img; i++) {
-            free(raw_info->images[i]);
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
+            free(raw_info->img_info.images[i]);
         }
-        free(raw_info->images);
+        free(raw_info->img_info.images);
         tsk_img_free(raw_info);
         return NULL;
     }
@@ -685,16 +740,16 @@ raw_open(int a_num_img, const TSK_TCHAR * const a_images[],
         tsk_fprintf(stderr,
             "raw_open: segment: 0  size: %" PRIuOFF "  max offset: %"
             PRIuOFF "  path: %" PRIttocTSK "\n", first_seg_size,
-            raw_info->max_off[0], raw_info->images[0]);
+            raw_info->max_off[0], raw_info->img_info.images[0]);
     }
 
     /* get size info for each file - we do not open each one because that
-     * could cause us to run out of file decsriptors when we only need a few.
+     * could cause us to run out of file descriptors when we only need a few.
      * The descriptors are opened as needed */
-    for (i = 1; i < raw_info->num_img; i++) {
+    for (i = 1; i < raw_info->img_info.num_img; i++) {
         TSK_OFF_T size;
         raw_info->cptr[i] = -1;
-        size = get_size(raw_info->images[i], raw_info->is_winobj);
+        size = get_size(raw_info->img_info.images[i], raw_info->is_winobj);
         if (size < 0) {
             if (size == -1) {
                 if (tsk_verbose) {
@@ -703,10 +758,10 @@ raw_open(int a_num_img, const TSK_TCHAR * const a_images[],
                 }
             }
             free(raw_info->cptr);
-            for (i = 0; i < raw_info->num_img; i++) {
-                free(raw_info->images[i]);
+            for (i = 0; i < raw_info->img_info.num_img; i++) {
+                free(raw_info->img_info.images[i]);
             }
-            free(raw_info->images);
+            free(raw_info->img_info.images);
             tsk_img_free(raw_info);
             return NULL;
         }
@@ -719,14 +774,290 @@ raw_open(int a_num_img, const TSK_TCHAR * const a_images[],
             tsk_fprintf(stderr,
                 "raw_open: segment: %d  size: %" PRIuOFF "  max offset: %"
                 PRIuOFF "  path: %" PRIttocTSK "\n", i, size,
-                raw_info->max_off[i], raw_info->images[i]);
+                raw_info->max_off[i], raw_info->img_info.images[i]);
         }
     }
 
     return img_info;
 }
 
+TSK_IMG_INFO *
+raw_open_digi(int a_num_img, const TSK_TCHAR * const a_images[],
+    unsigned int a_ssize)
+{
+    IMG_RAW_INFO *raw_info;
+    TSK_IMG_INFO *img_info;
+    int i;
+    TSK_OFF_T first_seg_size;
 
+    if ((raw_info =
+            (IMG_RAW_INFO *) tsk_img_malloc(sizeof(IMG_RAW_INFO))) == NULL)
+        return NULL;
+
+    img_info = (TSK_IMG_INFO *) raw_info;
+
+    img_info->itype = TSK_IMG_TYPE_RAW;
+    img_info->read = raw_read;
+    img_info->close = raw_close;
+    img_info->imgstat = raw_imgstat;
+
+    img_info->sector_size = 512;
+    if (a_ssize)
+        img_info->sector_size = a_ssize;
+    raw_info->is_winobj = 0;
+
+#if defined(TSK_WIN32) || defined(__CYGWIN__)
+    /* determine if this is the path to a Windows device object */
+    if ((a_images[0][0] == _TSK_T('\\'))
+        && (a_images[0][1] == _TSK_T('\\'))
+        && ((a_images[0][2] == _TSK_T('.')) || (a_images[0][2] == _TSK_T('?')))
+        && (a_images[0][3] == _TSK_T('\\'))) {
+        raw_info->is_winobj = 1;
+    }
+#endif
+
+    /* Check that the first image file exists and is not a directory */
+    first_seg_size = get_size_digi(a_images[0], raw_info->is_winobj);
+    if (first_seg_size < -1) {
+        tsk_img_free(raw_info);
+        return NULL;
+    }
+
+    /* see if there are more of them... */
+    if ((a_num_img == 1) && (raw_info->is_winobj == 0)) {
+        const char * strSingleImageFile = get_image_file( a_images[0] );
+        if ((raw_info->img_info.images =
+                tsk_img_findFiles(strSingleImageFile,
+                    &raw_info->img_info.num_img)) == NULL) {
+            tsk_error_reset();
+            tsk_error_set_errno(TSK_ERR_IMG_STAT);
+            tsk_error_set_errstr
+                ("raw_open: could not find segment files starting at \"%"
+                PRIttocTSK "\"", a_images[0]);
+            tsk_img_free(raw_info);
+            return NULL;
+        }
+    }
+    else {
+        raw_info->img_info.num_img = a_num_img;
+        raw_info->img_info.images =
+            (TSK_TCHAR **) tsk_malloc(sizeof(TSK_TCHAR *) * a_num_img);
+        if (raw_info->img_info.images == NULL) {
+            tsk_img_free(raw_info);
+            return NULL;
+        }
+
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
+            const char * strImageFile = get_image_file( a_images[i] );
+            size_t len = TSTRLEN(strImageFile);
+            raw_info->img_info.images[i] =
+                (TSK_TCHAR *) tsk_malloc(sizeof(TSK_TCHAR) * (len + 1));
+            if (raw_info->img_info.images[i] == NULL) {
+                int j;
+                for (j = 0; j < i; j++) {
+                    free(raw_info->img_info.images[j]);
+                }
+                free(raw_info->img_info.images);
+                tsk_img_free(raw_info);
+                return NULL;
+            }
+            TSTRNCPY(raw_info->img_info.images[i], strImageFile, len + 1);
+            free(strImageFile);
+        }
+    }
+
+    /* sanity check: when we have multiple segments, the size of
+     * each must be known */
+    if ((raw_info->img_info.num_img > 1) && (first_seg_size < 0)) {
+        if (tsk_verbose) {
+            tsk_fprintf(stderr,
+                "raw_open: file size is unknown in a segmented raw image\n");
+        }
+
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
+            free(raw_info->img_info.images[i]);
+        }
+        free(raw_info->img_info.images);
+        tsk_img_free(raw_info);
+        return NULL;
+    }
+
+    /* initialize the split cache */
+    raw_info->cptr = (int *) tsk_malloc(raw_info->img_info.num_img * sizeof(int));
+    if (raw_info->cptr == NULL) {
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
+            free(raw_info->img_info.images[i]);
+        }
+        free(raw_info->img_info.images);
+        tsk_img_free(raw_info);
+        return NULL;
+    }
+    memset((void *) &raw_info->cache, 0,
+        SPLIT_CACHE * sizeof(IMG_SPLIT_CACHE));
+    raw_info->next_slot = 0;
+
+    /* initialize the offset table and re-use the first segment
+     * size gathered above */
+    raw_info->max_off =
+        (TSK_OFF_T *) tsk_malloc(raw_info->img_info.num_img * sizeof(TSK_OFF_T));
+    if (raw_info->max_off == NULL) {
+        free(raw_info->cptr);
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
+            free(raw_info->img_info.images[i]);
+        }
+        free(raw_info->img_info.images);
+        tsk_img_free(raw_info);
+        return NULL;
+    }
+    img_info->size = first_seg_size;
+    raw_info->max_off[0] = img_info->size;
+    raw_info->cptr[0] = -1;
+    if (tsk_verbose) {
+        tsk_fprintf(stderr,
+            "raw_open: segment: 0  size: %" PRIuOFF "  max offset: %"
+            PRIuOFF "  path: %" PRIttocTSK "\n", first_seg_size,
+            raw_info->max_off[0], raw_info->img_info.images[0]);
+    }
+
+    /* get size info for each file - we do not open each one because that
+     * could cause us to run out of file decsriptors when we only need a few.
+     * The descriptors are opened as needed */
+    for (i = 1; i < raw_info->img_info.num_img; i++) {
+        TSK_OFF_T size;
+        raw_info->cptr[i] = -1;
+        size = get_size_digi(a_images[i], raw_info->is_winobj);
+        if (size < 0) {
+            if (size == -1) {
+                if (tsk_verbose) {
+                    tsk_fprintf(stderr,
+                        "raw_open: file size is unknown in a segmented raw image\n");
+                }
+            }
+            free(raw_info->cptr);
+            for (i = 0; i < raw_info->img_info.num_img; i++) {
+                free(raw_info->img_info.images[i]);
+            }
+            free(raw_info->img_info.images);
+            tsk_img_free(raw_info);
+            return NULL;
+        }
+
+        /* add the size of this image to the total and save the current max */
+        img_info->size += size;
+        raw_info->max_off[i] = img_info->size;
+
+        if (tsk_verbose) {
+            tsk_fprintf(stderr,
+                "raw_open: segment: %d  size: %" PRIuOFF "  max offset: %"
+                PRIuOFF "  path: %" PRIttocTSK "\n", i, size,
+                raw_info->max_off[i], raw_info->img_info.images[i]);
+        }
+    }
+
+    return img_info;
+}
+
+TSK_IMG_INFO *
+raw_append(TSK_IMG_INFO * img_info, int a_num_img, const TSK_TCHAR * const a_images[],
+    unsigned int a_ssize)
+{
+    
+    int i;
+        IMG_RAW_INFO * raw_info = (IMG_RAW_INFO *)img_info;
+        int curr_num_img = raw_info->img_info.num_img;
+        raw_info->img_info.num_img += a_num_img;
+        raw_info->img_info.images =
+            (TSK_TCHAR **) tsk_realloc(raw_info->img_info.images, sizeof(TSK_TCHAR *) * raw_info->img_info.num_img);
+        if (raw_info->img_info.images == NULL) {
+            tsk_img_free(raw_info);
+            return NULL;
+        }
+
+        for (i = 0; i < a_num_img; i++) {
+            const char * strImageFile = get_image_file( a_images[i] );
+            size_t len = TSTRLEN(strImageFile);
+            raw_info->img_info.images[curr_num_img + i] =
+                (TSK_TCHAR *) tsk_malloc(sizeof(TSK_TCHAR) * (len + 1));
+            if (raw_info->img_info.images[curr_num_img + i] == NULL) {
+                int j;
+                for (j = 0; j < i; j++) {
+                    free(raw_info->img_info.images[j]);
+                }
+                free(raw_info->img_info.images);
+                tsk_img_free(raw_info);
+                return NULL;
+            }
+            TSTRNCPY(raw_info->img_info.images[curr_num_img + i], strImageFile, len + 1);
+            free(strImageFile);
+        }
+    
+
+    
+
+    /* initialize the split cache */
+    raw_info->cptr = (int *) tsk_realloc(raw_info->cptr, raw_info->img_info.num_img * sizeof(int));
+    if (raw_info->cptr == NULL) {
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
+            free(raw_info->img_info.images[i]);
+        }
+        free(raw_info->img_info.images);
+        tsk_img_free(raw_info);
+        return NULL;
+    }
+    
+
+    /* initialize the offset table and re-use the first segment
+     * size gathered above */
+    raw_info->max_off =
+        (TSK_OFF_T *) tsk_realloc(raw_info->max_off, raw_info->img_info.num_img * sizeof(TSK_OFF_T));
+    if (raw_info->max_off == NULL) {
+        free(raw_info->cptr);
+        for (i = 0; i < raw_info->img_info.num_img; i++) {
+            free(raw_info->img_info.images[i]);
+        }
+        free(raw_info->img_info.images);
+        tsk_img_free(raw_info);
+        return NULL;
+    }
+    
+
+    /* get size info for each file - we do not open each one because that
+     * could cause us to run out of file decsriptors when we only need a few.
+     * The descriptors are opened as needed */
+    for (i = 0; i < a_num_img; i++) {
+        TSK_OFF_T size;
+        raw_info->cptr[curr_num_img+i] = -1;
+        size = get_size_digi(a_images[i], raw_info->is_winobj);
+        if (size < 0) {
+            if (size == -1) {
+                if (tsk_verbose) {
+                    tsk_fprintf(stderr,
+                        "raw_open: file size is unknown in a segmented raw image\n");
+                }
+            }
+            free(raw_info->cptr);
+            for (i = 0; i < raw_info->img_info.num_img; i++) {
+                free(raw_info->img_info.images[i]);
+            }
+            free(raw_info->img_info.images);
+            tsk_img_free(raw_info);
+            return NULL;
+        }
+
+        /* add the size of this image to the total and save the current max */
+        img_info->size += size;
+        raw_info->max_off[curr_num_img+i] = img_info->size;
+
+        if (tsk_verbose) {
+            tsk_fprintf(stderr,
+                "raw_open: segment: %d  size: %" PRIuOFF "  max offset: %"
+                PRIuOFF "  path: %" PRIttocTSK "\n", i, size,
+                raw_info->max_off[curr_num_img+i], raw_info->img_info.images[curr_num_img+i]);
+        }
+    }
+
+    return img_info;
+}
 /* tsk_img_malloc - tsk_malloc, then set image tag
  * This is for img module and all its inheritances
  */
